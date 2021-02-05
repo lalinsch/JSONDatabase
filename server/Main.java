@@ -8,81 +8,90 @@ import java.net.Socket;
 
 public class Main {
 
+    private static final String[] database = new String[1000];
+
     public static void main(String[] args) {
+        connect();
+    }
+
+    public static void connect() {
         String address = "127.0.0.1";
         int port = 23456;
         try (ServerSocket serverSocket = new ServerSocket(port, 50, InetAddress.getByName(address))) {
             System.out.println("Server started!");
-            try (Socket socket = serverSocket.accept();
-                 DataInputStream inputStream = new DataInputStream(socket.getInputStream());
-                 DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream())
-            ) {
-                String incomingMessage = inputStream.readUTF();
-                System.out.println("Received: " + incomingMessage);
-
-                String outgoingMessage = String.format("A record # %s was sent!", incomingMessage.split("\\s+#\\s+")[1]);
-                outputStream.writeUTF(outgoingMessage);
-                System.out.println("Sent: " + outgoingMessage);
+            //Loops until the server is closed
+            while (!serverSocket.isClosed()) {
+                try (Socket socket = serverSocket.accept();
+                     DataInputStream inputStream = new DataInputStream(socket.getInputStream());
+                     DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream())
+                ) {
+                    //reads the incoming message
+                    String command = inputStream.readUTF();
+                    //outputs the result after using the run method
+                    outputStream.writeUTF(run(command));
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-        String[] text = new String[100];
-        label:
-        while (true) {
-            String[] command = scanner.nextLine().split(" ");
-            switch (command[0]) {
-                case "set": {
-                    int index = Integer.parseInt(command[1]);
-                    if (indexIsInvalid(index)) {
-                        System.out.println("ERROR");
-                    } else {
-                        index -= 1;
-                        String textInput = "";
-                        for (int i = 2; i < command.length; i++) {
-                            textInput = textInput.concat(command[i] + " ");
-                        }
-                        text[index] = textInput;
-                        System.out.println("OK");
+    //Takes a command from the arguments and outputs a result
+    public static String run(String command) {
+
+        String[] commandArray = command.split(" ");
+        switch (commandArray[0]) {
+            case "set": {
+                int index = Integer.parseInt(commandArray[1]);
+                if (indexIsInvalid(index)) {
+                    return "ERROR";
+                } else {
+                    index -= 1;
+                    String textInput = "";
+                    for (int i = 2; i < commandArray.length; i++) {
+                        textInput = textInput.concat(commandArray[i] + " ");
                     }
-                    break;
+                    database[index] = textInput;
+                    return "OK";
                 }
-                case "get": {
-                    int index = Integer.parseInt(command[1]);
-                    if (indexIsInvalid(index)) {
-                        System.out.println("ERROR");
-                    } else {
-                        index -= 1;
-                        if (text[index] == null || text[index].isEmpty()) {
-                            System.out.println("ERROR");
-                        } else {
-                            System.out.println(text[index]);
-                        }
-                    }
-                    break;
-                }
-                case "delete": {
-                    int index = Integer.parseInt(command[1]);
-                    if (indexIsInvalid(index)) {
-                        System.out.println("ERROR");
-                    } else {
-                        index -= 1;
-                        text[index] = "";
-                        System.out.println("OK");
-                    }
-                    break;
-                }
-                case "exit":
-                    break label;
-                default:
-                    System.out.println("ERROR");
             }
+            case "get": {
+                int index = Integer.parseInt(commandArray[1]);
+                if (indexIsInvalid(index)) {
+                    return "ERROR";
+                } else {
+                    index -= 1;
+                    if (database[index] == null || database[index].isEmpty()) {
+                        return "ERROR";
+                    } else {
+                        return database[index];
+                    }
+                }
+            }
+            case "delete": {
+                int index = Integer.parseInt(commandArray[1]);
+                if (indexIsInvalid(index)) {
+                    return "ERROR";
+                } else {
+                    index -= 1;
+                    database[index] = "";
+                    return "OK";
+                }
+            }
+            case "exit":
+                System.exit(0);
+            default:
+                return "ERROR";
         }
+
     }
 
     public static boolean indexIsInvalid(int index) {
-        return index < 1 || index > 100;
+        return index < 1 || index > 1000;
     }
+
 }
+
+
