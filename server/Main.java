@@ -1,14 +1,26 @@
 package server;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.lang.reflect.Type;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
+import java.util.Map;
 
 public class Main {
-
-    private static final String[] database = new String[1000];
+    //Stores and handles all keys and values in a HashMap (get, put, remove)
+    private static final Map<Object, Object> database = new HashMap<>();
+    //Create a TypeToken object in order to declare the map's type when it is parsed by Gson
+    private static final Type mapType = new TypeToken<Map<String, String>>() {
+    }.getType();
+    private static Map<String, String> params;
+    //Stores the elements of the server to response, resets everytime there is a new connection
+    private static Map<String, String> response = new HashMap<>();
 
     public static void main(String[] args) {
         connect();
@@ -26,9 +38,15 @@ public class Main {
                      DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream())
                 ) {
                     //reads the incoming message
-                    String command = inputStream.readUTF();
+                    String incomingJsonString = inputStream.readUTF();
+                    Gson gson = new Gson();
+                    //Parse the JSON message into our params Map
+                    params = gson.fromJson(incomingJsonString, mapType);
                     //outputs the result after using the run method
-                    outputStream.writeUTF(run(command));
+                    response = new HashMap<>(); //clears the response hashmap to build a new one
+                    run(params.get("type"));
+                    String outgoingGsonString = gson.toJson(response);
+                    outputStream.writeUTF(outgoingGsonString);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -38,59 +56,46 @@ public class Main {
         }
     }
 
-    //Takes a command from the arguments and outputs a result
-    public static String run(String command) {
-
-        String[] commandArray = command.split(" ");
-        switch (commandArray[0]) {
+    //Takes a command from the arguments and builds a response
+    public static void run(Object command) {
+        switch ((String) command) {
             case "set": {
-                int index = Integer.parseInt(commandArray[1]);
-                if (indexIsInvalid(index)) {
-                    return "ERROR";
-                } else {
-                    index -= 1;
-                    String textInput = "";
-                    for (int i = 2; i < commandArray.length; i++) {
-                        textInput = textInput.concat(commandArray[i] + " ");
-                    }
-                    database[index] = textInput;
-                    return "OK";
-                }
+                database.put(params.get("key"), params.get("value"));
+                response.put("response", "OK");
+                return;
             }
             case "get": {
-                int index = Integer.parseInt(commandArray[1]);
-                if (indexIsInvalid(index)) {
-                    return "ERROR";
+                if (!database.containsKey(params.get("key"))) {
+                    response.put("response", "ERROR");
+                    response.put("reason", "No such key");
                 } else {
-                    index -= 1;
-                    if (database[index] == null || database[index].isEmpty()) {
-                        return "ERROR";
-                    } else {
-                        return database[index];
-                    }
+                    response.put("response", "OK");
+                    response.put("value", (String) database.get(params.get("key")));
                 }
+                return;
             }
+
             case "delete": {
-                int index = Integer.parseInt(commandArray[1]);
-                if (indexIsInvalid(index)) {
-                    return "ERROR";
+                if (!database.containsKey(params.get("key"))) {
+                    response.put("response", "ERROR");
+                    response.put("reason", "No such key");
                 } else {
-                    index -= 1;
-                    database[index] = "";
-                    return "OK";
+                    database.remove(params.get("key"));
+                    response.put("response", "OK");
                 }
+                return;
             }
             case "exit":
                 System.exit(0);
             default:
-                return "ERROR";
+                response.put("response", "ERROR");
         }
 
     }
 
-    public static boolean indexIsInvalid(int index) {
-        return index < 1 || index > 1000;
-    }
+//    public static boolean indexIsInvalid(int index) {
+//        return index < 1 || index > 1000;
+//    }
 
 }
 
