@@ -1,17 +1,20 @@
 package server;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
+import com.google.gson.*;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import static server.ServerUtilities.*;
+import static server.ServerUtilities.createDatabaseIfNotExists;
+import static server.ServerUtilities.writeToDatabaseFile;
 
 public class JsonDatabase {
     private final Path dbPath;
@@ -21,79 +24,130 @@ public class JsonDatabase {
     private final Lock writeLock = lock.writeLock();
 
     public static final String ERROR_NO_SUCH_KEY = "{\"response\":\"ERROR\",\"reason\":\"No such key\"}";
-    public static final String ERROR_INCORRECT_JSON = "{\"response\":\"ERROR\",\"reason\":\"Incorrect JSON\"}";
     public static final String OK = "{\"response\":\"OK\"}";
 
     public JsonDatabase(String dbPath) throws IOException {
         this.dbPath = Path.of(dbPath);
         createDatabaseIfNotExists(this.dbPath);
-        this.database = readDbFromFile(this.dbPath).getAsJsonObject();
+        this.database = readFromFile(this.dbPath).getAsJsonObject();
     }
 
-    public String set(String key, String value) throws IOException {
-        writeLock.lock();
-        try {
-            database.addProperty(key, value);
-            writeToDatabaseFile(database, dbPath);
-        } finally {
-            writeLock.unlock();
-        }
-        return OK;
-    }
-
-    public String get(String key) {
-        String result = null;
+    //Reads the database from file and converts it into a JsonElement
+    public JsonElement readFromFile(Path path) {
+        JsonElement databaseTree = null;
         readLock.lock();
-        try {
-            JsonElement value = database.get(key);
-            if (value != null) {
-                result = value.getAsString();
-            }
-        } finally {
-            readLock.unlock();
+        try (Reader reader = Files.newBufferedReader(path)) {
+            databaseTree = JsonParser.parseReader(reader);
+        } catch (IOException exception) {
+            exception.printStackTrace();
         }
-        return result != null ? "{\"result\" : \"OK\", \"value\" : \"" + result + "\"}" : ERROR_NO_SUCH_KEY;
+        readLock.unlock();
+        return databaseTree;
     }
 
-    public String delete(String key) throws IOException {
-        String result = ERROR_NO_SUCH_KEY;
+    //After making changes, writes to the database file
+    public void writeToFile(Path dbFilePath) {
         writeLock.lock();
-        try {
-            if (database.remove(key) != null) {
-                writeToDatabaseFile(database, dbPath);
-                result = OK;
-            }
-        } finally {
-            writeLock.unlock();
+        try (FileOutputStream fos = new FileOutputStream(dbFilePath.toString());
+             OutputStreamWriter osr = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+            Gson gson = new Gson();
+            gson.toJson(database, osr);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
-        return result;
+        writeLock.unlock();
     }
 
-    public String executeJson(String json) throws IOException {
-        JsonObject jsonObject;
-        String type;
-        String key;
-        String value = null;
+    //method that executes the clients requests depending on the type.
+    public String executeJson(String inputJson) throws IOException {
+        JsonElement clientElement = JsonParser.parseString(inputJson);
+        JsonObject clientObject = clientElement.getAsJsonObject();
+        JsonElement clientTask = clientObject.get("type");
+        String type = clientTask.getAsString();
+        String response = null;
 
-        try {
-            jsonObject = JsonParser.parseString(json).getAsJsonObject();
-            type = jsonObject.get("type").getAsString();
-            key = jsonObject.get("key").getAsString();
-            if (type.equals("set")) {
-                value = jsonObject.get("value").getAsString();
+        JsonElement element = JsonParser.parseString(OK);
+        JsonObject value = element.getAsJsonObject();
+
+        if (!"exit".equals(type)) {
+            switch (type) {
+                case "set":
+                    if (!clientObject.get("key").isJsonArray()) {
+                        String newKey = clientObject.get("key").getAsString();
+                        JsonElement newValue = clientObject.get("value");
+                        database.add(newKey, newValue);
+                        writeToFile(dbPath);
+                        response = OK;
+                    } else {
+                        JsonArray clientArray = clientObject.get("key").getAsJsonArray();
+                        JsonObject tempObject = database.getAsJsonObject();
+                        for (int i = 0; i < clientArray.size(); i++) {
+                            if (tempObject.has(clientArray.get(i).getAsString())) {
+                                tempObject = tempObject.get(clientArray.get(i).getAsString()).getAsJsonObject();
+                                if (i == clientArray.size() - 2) {
+                                    tempObject.add(clientArray.get(i + 1).getAsString(), clientObject.get("value"));
+                                    writeToDatabaseFile(database, dbPath);
+                                    response = OK;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                case "get":
+                    if (clientObject.get("key").isJsonArray()) {
+                        JsonArray clientArray = clientObject.get("key").getAsJsonArray();
+                        JsonObject tempDatabase = database.getAsJsonObject();
+                        for (int i = 0; i < clientArray.size(); i++) {
+                            if (tempDatabase.has(clientArray.get(i).getAsString())) {
+                                if (tempDatabase.get(clientArray.get(i).getAsString()).isJsonObject()) {
+                                    tempDatabase = tempDatabase.get(clientArray.get(i).getAsString()).getAsJsonObject();
+                                    if (i == clientArray.size() - 1) {
+                                        value.add("value", tempDatabase);
+                                        break;
+                                    }
+                                } else {
+                                    value.add("value", tempDatabase.get(clientArray.get(i).getAsString()));
+                                    break;
+                                }
+                            } else {
+                                value.addProperty("response", "ERROR");
+                                value.addProperty("reason", "No such key");
+                            }
+                        }
+                    }
+                    break;
+                case "delete":
+                    if (clientObject.get("key").isJsonArray()) {
+                        JsonArray clientArray = clientObject.getAsJsonArray();
+                        JsonObject tempObject = database.getAsJsonObject();
+                        for (int i = 0; i < tempObject.size(); i++) {
+                            if (tempObject.has(clientArray.get(i).getAsString())) {
+                                tempObject = tempObject.get(clientArray.get(i).getAsString()).getAsJsonObject();
+                                if (i == clientArray.size() - 2) {
+                                    tempObject.remove(clientArray.get(i + 1).getAsString());
+                                    writeToDatabaseFile(database, dbPath);
+                                    response = OK;
+                                }
+                                break;
+                            } else {
+                                response = ERROR_NO_SUCH_KEY;
+                            }
+                        }
+                    } else {
+                        if (database.has(clientObject.get("key").getAsString())) {
+                            database.remove(clientObject.get("key").getAsString());
+                            writeToDatabaseFile(database, dbPath);
+                            response = OK;
+                        } else {
+                            response = ERROR_NO_SUCH_KEY;
+                        }
+                    }
             }
-        } catch (IllegalStateException | NullPointerException | JsonSyntaxException e) {
-            return ERROR_INCORRECT_JSON;
         }
-        if ((value == null && jsonObject.size() != 2) || (value != null && jsonObject.size() != 3)) {
-            return ERROR_INCORRECT_JSON;
-        }
-
-        switch (type) {
-            case "get": return get(key);
-            case "set": return set(key, value);
-            case "delete": return delete(key);
-            default: return ERROR_INCORRECT_JSON;
+        if ("get".equals(type)) {
+            return value.toString();
+        } else {
+            return response;
         }
     }
 }

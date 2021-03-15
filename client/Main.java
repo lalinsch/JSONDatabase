@@ -3,14 +3,11 @@ package client;
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
 import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
 
 import java.io.*;
-import java.lang.reflect.Type;
 import java.net.InetAddress;
 import java.net.Socket;
-import java.net.UnknownHostException;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class Main {
@@ -27,12 +24,10 @@ public class Main {
     @Parameter(names = "-v", description = "value to save")
     private static String value = null;
 
-    private static final Gson gson = new Gson();
+    private static final String ADDRESS = "127.0.0.1";
+    private static final int PORT = 23456;
+    private static Map<String, String> params = new LinkedHashMap<>();
 
-    private static Map<String, String> params = new HashMap<>();
-
-    private static final Type mapType = new TypeToken<Map<String, String>>() {
-    }.getType();
 
     public static void main(String[] args) {
         Main main = new Main();
@@ -46,21 +41,25 @@ public class Main {
 
     //Connects to the server and sends the message using the program parameters
     public static void run() {
-        String address = "127.0.0.1";
-        int port = 23456;
-        try (Socket socket = new Socket(InetAddress.getByName(address), port);
+
+        try (Socket socket = new Socket(InetAddress.getByName(ADDRESS), PORT);
              DataInputStream inputStream = new DataInputStream(socket.getInputStream());
              DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream())
         ) {
+
             System.out.println("Client started!");
-            //Creates a map with the parameters parsed by JCommander
+            String outgoingMessage = null;
+            //If there's a file specified in args it reads it to parse the JSON arguments
             if (fileName != null) {
-                String filePath = "./JSON Database/task/src/client/data/" + fileName;
-                BufferedReader br;
-                try {
-                    br = new BufferedReader(new FileReader(filePath));
-                    String jsonParam = br.readLine();
-                    params = gson.fromJson(jsonParam, mapType);
+                String filePath = "src/client/data/" + fileName;
+                try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+                    String line;
+                    StringBuilder jsonParam = new StringBuilder();
+                    while ((line = br.readLine()) != null) {
+                        jsonParam.append(line);
+                        jsonParam.append("\n");
+                    }
+                    outgoingMessage = jsonParam.toString();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
@@ -70,19 +69,19 @@ public class Main {
                 if (value != null) {
                     params.put("value", value);
                 }
+                //Use Gson object to send parameters as Json
+                Gson gson = new Gson();
+                outgoingMessage = gson.toJson(params);
             }
-            //Use Gson object to send parameters as Json
-            String gsonString = gson.toJson(params);
             //Sends the message to server in JSON format
-            outputStream.writeUTF(gsonString);
-            System.out.println("Sent: " + gsonString);
+            assert outgoingMessage != null;
+            outputStream.writeUTF(outgoingMessage);
+            System.out.println("Sent: " + outgoingMessage);
             //Receives the server message in JSON format
             String receivedMessage = inputStream.readUTF();
             System.out.println("Received: " + receivedMessage);
-        } catch (UnknownHostException e) {
+        } catch (IOException e) {
             e.printStackTrace();
-        } catch (IOException exception) {
-            exception.printStackTrace();
         }
     }
 
